@@ -540,6 +540,7 @@ Read the target branch tip from .pes/refs/heads/<branch>.
 object_read the root tree of that commit.
 Recursively walk the tree: for blob entries write (or overwrite) the file in the working directory; for tree entries (mode 040000) create directories.
 Delete any working-directory file that is present in the current HEAD's tree but absent from the target tree.
+
 What makes this complex:
 
 Dirty-file conflicts. If a tracked file has local modifications and the target branch has a different version of that file, checkout must refuse or the user's edits are destroyed silently.
