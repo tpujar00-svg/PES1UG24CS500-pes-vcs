@@ -530,18 +530,43 @@ The following questions cover filesystem concepts beyond the implementation scop
 ### Branching and Checkout
 
 **Q5.1:** A branch in Git is just a file in `.git/refs/heads/` containing a commit hash. Creating a branch is creating a file. Given this, how would you implement `pes checkout <branch>` — what files need to change in `.pes/`, and what must happen to the working directory? What makes this operation complex?
+Files that must change in .pes/:
 
-**Q5.2:** When switching branches, the working directory must be updated to match the target branch's tree. If the user has uncommitted changes to a tracked file, and that file differs between branches, checkout must refuse. Describe how you would detect this "dirty working directory" conflict using only the index and the object store.
+.pes/HEAD — rewrite the line from ref: refs/heads/<current> to ref: refs/heads/<target>.
+If the target branch is new, create .pes/refs/heads/<target> pointing to the desired commit hash.
+Working-directory update:
 
-**Q5.3:** "Detached HEAD" means HEAD contains a commit hash directly instead of a branch reference. What happens if you make commits in this state? How could a user recover those commits?
+Read the target branch tip from .pes/refs/heads/<branch>.
+object_read the root tree of that commit.
+Recursively walk the tree: for blob entries write (or overwrite) the file in the working directory; for tree entries (mode 040000) create directories.
+Delete any working-directory file that is present in the current HEAD's tree but absent from the target tree.
+What makes this complex:
 
-### Garbage Collection and Space Reclamation
+Dirty-file conflicts. If a tracked file has local modifications and the target branch has a different version of that file, checkout must refuse or the user's edits are destroyed silently.
+Untracked-file collisions. If an untracked file sits at a path that the target tree would create, checkout must refuse to avoid clobbering it.
+Partial failure. A crash halfway through leaves a mixed working directory. A production implementation writes a lock or in-progress marker to allow recovery.
+Three-way diff. Deciding which files to touch requires comparing the current-HEAD tree, the target-HEAD tree, and the index all at once.
 
-**Q6.1:** Over time, the object store accumulates unreachable objects — blobs, trees, or commits that no branch points to (directly or transitively). Describe an algorithm to find and delete these objects. What data structure would you use to track "reachable" hashes efficiently? For a repository with 100,000 commits and 50 branches, estimate how many objects you'd need to visit.
+Q5.2 — Detecting dirty working-directory conflicts
+Using only the index and the object store:
 
-**Q6.2:** Why is it dangerous to run garbage collection concurrently with a commit operation? Describe a race condition where GC could delete an object that a concurrent commit is about to reference. How does Git's real GC avoid this?
+Load the current index (the staged snapshot matching HEAD after the last commit).
+For each entry, stat() the working-directory file. If st_mtime or st_size differs from the stored values, re-hash the file (SHA-256) and compare to the stored hash. A mismatch means the file is dirty.
+For each path in the target branch's tree: if that path is in the index and is dirty (step 2), refuse checkout for that path.
+For untracked files: if a path in the target tree does not appear in the index but already exists on disk, refuse checkout to avoid overwriting it.
+The mtime/size check is a fast first pass; the full hash re-read is the authoritative check used only when metadata differs.
 
----
+Q5.3 — Detached HEAD and recovery
+When HEAD holds a raw commit hash instead of ref: refs/heads/<branch>, head_update writes new hashes directly into HEAD. Commits still chain correctly via parent pointers, but no branch file is updated. Once you check out a branch, HEAD is overwritten and the detached chain has no ref pointing to it — it becomes unreachable from all named references.
+
+Recovery before switching away:
+
+cat .pes/HEAD                            # note the hash
+echo <hash> > .pes/refs/heads/recovered
+echo "ref: refs/heads/recovered" > .pes/HEAD
+Recovery after switching away: the commit objects still exist in the object store. Walk every file under .pes/objects/, call object_read on each, and look for OBJ_COMMIT objects whose parent chain leads to your lost work. Git calls this git fsck --lost-found. The GC grace period (see Q6.2) keeps the objects safe for at least two weeks.
+
+
 
 ## Submission Checklist
 
